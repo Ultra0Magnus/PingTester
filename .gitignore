@@ -1,0 +1,8 @@
+# Python
+__pycache__/
+*.pyc
+
+# Fichiers générés par l'outil
+ping_log.txt
+ping_results.csv
+*.png
