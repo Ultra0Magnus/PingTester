@@ -8,6 +8,8 @@ import csv
 import statistics
 import threading
 import queue
+import os
+import sys
 from pathlib import Path
 
 import matplotlib
@@ -639,11 +641,16 @@ class PingApp:
         self.btn_ping.config(state="normal")
 
 
+def resource_path(rel):
+    """Chemin d'une ressource, compatible exécution normale et PyInstaller (.exe)."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel)
+
+
 if __name__ == "__main__":
     root = tk.Tk()
-    icon_file = "ping_tool_ico.ico"
     try:
-        root.iconbitmap(icon_file)
+        root.iconbitmap(resource_path("ping_tool_ico.ico"))
     except Exception:
         pass
     app = PingApp(root)

@@ -6,3 +6,8 @@ __pycache__/
 ping_log.txt
 ping_results.csv
 *.png
+
+# Artefacts de build PyInstaller
+build/
+dist/
+*.spec
