@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import messagebox, filedialog
+from tkinter import messagebox, filedialog, colorchooser
 import subprocess
 import datetime
 import time
@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 import customtkinter as ctk
+from PIL import Image
 
 import matplotlib
 matplotlib.use("TkAgg")
@@ -25,20 +26,49 @@ TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
 LATENCY_RE = re.compile(r"(?:temps|time)[=<]?\s*(\d+)\s*ms", re.IGNORECASE)
 TIMEOUT_RE = re.compile(r"(D[ée]lai d|Request timed out|h[ôo]te de destination|Destination host)", re.IGNORECASE)
 
-# --- Couleurs (accent indigo/violet) ---
-ACCENT = "#6366f1"          # indigo-500
-ACCENT_HOVER = "#4f46e5"    # indigo-600
-DANGER = "#ef4444"          # red-500
-DANGER_HOVER = "#dc2626"    # red-600
+# --- Couleurs ---
+DEFAULT_ACCENT = "#6366f1"  # indigo-500
+DANGER = "#ef4444"
+DANGER_HOVER = "#dc2626"
 OK_COLOR = "#22c55e"
 WARN_COLOR = "#f59e0b"
 ERR_COLOR = "#ef4444"
 IDLE_COLOR = "#9ca3af"
-OUTLINE_HOVER = ("#eef2ff", "#312e81")  # (clair, sombre)
+
+# Préréglages de couleur d'accent (nom -> hex)
+PRESET_ACCENTS = {
+    "Indigo": "#6366f1",
+    "Bleu": "#3b82f6",
+    "Cyan": "#06b6d4",
+    "Vert": "#22c55e",
+    "Violet": "#a855f7",
+    "Rose": "#ec4899",
+    "Ambre": "#f59e0b",
+}
 
 # Palettes du graphique matplotlib selon le mode
 LIGHT_PLOT = {"fig": "#dbdbdb", "ax": "#ffffff", "fg": "#1f2937", "grid": "#c8c8c8"}
 DARK_PLOT = {"fig": "#2b2b2b", "ax": "#1e1e1e", "fg": "#e5e7eb", "grid": "#404040"}
+
+
+# --- Utilitaires couleur ---
+def _hex_to_rgb(h):
+    h = h.lstrip("#")
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def _rgb_to_hex(rgb):
+    return "#%02x%02x%02x" % (int(rgb[0]), int(rgb[1]), int(rgb[2]))
+
+
+def _blend(hex_color, target_rgb, t):
+    """Mélange hex_color vers target_rgb (t = proportion de target, 0..1)."""
+    base = _hex_to_rgb(hex_color)
+    return _rgb_to_hex(tuple(base[i] + (target_rgb[i] - base[i]) * t for i in range(3)))
+
+
+def darken(hex_color, t=0.18):
+    return _blend(hex_color, (0, 0, 0), t)
 
 
 def extract_latency(text):
@@ -97,6 +127,12 @@ def build_summary(rows):
     return s
 
 
+def resource_path(rel):
+    """Chemin d'une ressource, compatible exécution normale et PyInstaller (.exe)."""
+    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, rel)
+
+
 class PingApp:
     def __init__(self, root):
         self.root = root
@@ -111,14 +147,22 @@ class PingApp:
         self.duration = 0
         self.continuous = False
 
+        # Accent (modifiable à chaud)
+        self.accent = DEFAULT_ACCENT
+        self.accent_hover = darken(self.accent)
+        self.outline_hover = ("#eef2ff", "#312e81")
+        self.outline_btns = []
+        self.swatches = {}
+
         # Données du graphique en direct
-        self.gy = []          # latences (None pour timeout)
-        self.gto_x = []       # index des timeouts
+        self.gy = []
+        self.gto_x = []
         self.count_sent = 0
         self.count_lost = 0
         self.live_latencies = []
 
         self._build_widgets()
+        self.apply_accent(self.accent)
         self._apply_theme()
 
     # ------------------------------------------------------------------
@@ -132,15 +176,37 @@ class PingApp:
         outer = ctk.CTkFrame(self.root, fg_color="transparent")
         outer.pack(fill="both", expand=True, padx=16, pady=12)
 
-        # ---- En-tête ----
+        # ---- En-tête : logo + titre + sélecteur d'accent + mode sombre ----
         header = ctk.CTkFrame(outer, fg_color="transparent")
         header.pack(fill="x", pady=(0, 10))
-        ctk.CTkLabel(header, text="📡  Outil de Ping & Analyse",
-                     font=self.title_font).pack(side="left")
+
+        self.logo_img = None
+        try:
+            pil = Image.open(resource_path("ping_tool_ico.ico")).convert("RGBA")
+            self.logo_img = ctk.CTkImage(light_image=pil, dark_image=pil, size=(34, 34))
+        except Exception:
+            self.logo_img = None
+        ctk.CTkLabel(header, image=self.logo_img,
+                     text="  Outil de Ping & Analyse",
+                     compound="left", font=self.title_font).pack(side="left")
+
         self.dark_var = tk.BooleanVar(value=False)
         self.dark_switch = ctk.CTkSwitch(header, text="Mode sombre", variable=self.dark_var,
-                                         command=self._toggle_theme, progress_color=ACCENT)
+                                         command=self._toggle_theme, progress_color=self.accent)
         self.dark_switch.pack(side="right")
+
+        accent_frame = ctk.CTkFrame(header, fg_color="transparent")
+        accent_frame.pack(side="right", padx=(0, 16))
+        ctk.CTkLabel(accent_frame, text="Accent").pack(side="left", padx=(0, 8))
+        for name, color in PRESET_ACCENTS.items():
+            b = ctk.CTkButton(accent_frame, text="", width=22, height=22, corner_radius=11,
+                              fg_color=color, hover_color=color,
+                              command=lambda c=color: self.apply_accent(c))
+            b.pack(side="left", padx=2)
+            self.swatches[color] = b
+        ctk.CTkButton(accent_frame, text="🎨", width=28, height=22, corner_radius=11,
+                      fg_color="transparent", hover_color=self.outline_hover,
+                      command=self._pick_custom_accent).pack(side="left", padx=(6, 0))
 
         # ---- Carte Paramètres ----
         p_card = ctk.CTkFrame(outer, corner_radius=14)
@@ -163,7 +229,7 @@ class PingApp:
         self.continuous_var = tk.BooleanVar(value=False)
         self.continuous_switch = ctk.CTkSwitch(
             p_card, text="Ping en continu", variable=self.continuous_var,
-            command=self._toggle_continuous, progress_color=ACCENT)
+            command=self._toggle_continuous, progress_color=self.accent)
         self.continuous_switch.grid(row=2, column=0, columnspan=2, sticky="w", padx=16, pady=(6, 14))
 
         ctk.CTkLabel(p_card, text="Seuil d'alerte (ms, 0=off)").grid(row=2, column=2, sticky="w", padx=(0, 8), pady=(6, 14))
@@ -182,19 +248,17 @@ class PingApp:
         self.log_file_var = tk.StringVar(value="ping_log.txt")
         ctk.CTkEntry(f_card, textvariable=self.log_file_var, corner_radius=8).grid(
             row=1, column=1, sticky="ew", pady=6)
-        ctk.CTkButton(f_card, text="Parcourir…", width=110, corner_radius=18,
-                      fg_color="transparent", border_width=2, border_color=ACCENT,
-                      text_color=ACCENT, hover_color=OUTLINE_HOVER,
-                      command=self._browse_log).grid(row=1, column=2, padx=16, pady=6)
+        b_log = ctk.CTkButton(f_card, text="Parcourir…", width=110, corner_radius=18,
+                              fg_color="transparent", border_width=2, command=self._browse_log)
+        b_log.grid(row=1, column=2, padx=16, pady=6)
 
         ctk.CTkLabel(f_card, text="Sortie CSV").grid(row=2, column=0, sticky="w", padx=(16, 8), pady=6)
         self.csv_file_var = tk.StringVar(value="ping_results.csv")
         ctk.CTkEntry(f_card, textvariable=self.csv_file_var, corner_radius=8).grid(
             row=2, column=1, sticky="ew", pady=6)
-        ctk.CTkButton(f_card, text="Parcourir…", width=110, corner_radius=18,
-                      fg_color="transparent", border_width=2, border_color=ACCENT,
-                      text_color=ACCENT, hover_color=OUTLINE_HOVER,
-                      command=self._browse_csv).grid(row=2, column=2, padx=16, pady=6)
+        b_csv = ctk.CTkButton(f_card, text="Parcourir…", width=110, corner_radius=18,
+                              fg_color="transparent", border_width=2, command=self._browse_csv)
+        b_csv.grid(row=2, column=2, padx=16, pady=6)
 
         ctk.CTkLabel(f_card, text="Préfixe Graphiques").grid(row=3, column=0, sticky="w", padx=(16, 8), pady=(6, 14))
         self.plot_prefix_var = tk.StringVar(value="ping")
@@ -208,8 +272,7 @@ class PingApp:
             btn_row.columnconfigure(i, weight=1, uniform="btn")
 
         self.btn_ping = ctk.CTkButton(btn_row, text="▶  Lancer Ping", height=42, corner_radius=18,
-                                      font=self.section_font, fg_color=ACCENT, hover_color=ACCENT_HOVER,
-                                      command=self.start_ping)
+                                      font=self.section_font, command=self.start_ping)
         self.btn_ping.grid(row=0, column=0, sticky="ew", padx=6)
 
         self.btn_stop = ctk.CTkButton(btn_row, text="■  Stop", height=42, corner_radius=18,
@@ -219,15 +282,15 @@ class PingApp:
 
         self.btn_analyze = ctk.CTkButton(btn_row, text="📊  Analyser", height=42, corner_radius=18,
                                          font=self.section_font, fg_color="transparent", border_width=2,
-                                         border_color=ACCENT, text_color=ACCENT, hover_color=OUTLINE_HOVER,
                                          command=self.start_analyze)
         self.btn_analyze.grid(row=0, column=2, sticky="ew", padx=6)
 
         self.btn_clear = ctk.CTkButton(btn_row, text="🗑  Effacer", height=42, corner_radius=18,
                                        font=self.section_font, fg_color="transparent", border_width=2,
-                                       border_color=ACCENT, text_color=ACCENT, hover_color=OUTLINE_HOVER,
                                        command=self.clear_all)
         self.btn_clear.grid(row=0, column=3, sticky="ew", padx=6)
+
+        self.outline_btns = [self.btn_analyze, self.btn_clear, b_log, b_csv]
 
         # ---- Barre de statut ----
         status_card = ctk.CTkFrame(outer, corner_radius=14)
@@ -241,21 +304,19 @@ class PingApp:
         ctk.CTkLabel(status_card, textvariable=self.stats_var, font=self.mono_font).grid(
             row=0, column=2, sticky="e", padx=16, pady=12)
 
-        self.progress = ctk.CTkProgressBar(outer, corner_radius=8, progress_color=ACCENT)
+        self.progress = ctk.CTkProgressBar(outer, corner_radius=8)
         self.progress.set(0)
         self.progress.pack(fill="x", pady=(2, 8))
 
         # ---- Onglets : Graphique / Journal ----
-        self.tabview = ctk.CTkTabview(outer, corner_radius=14,
-                                      segmented_button_selected_color=ACCENT,
-                                      segmented_button_selected_hover_color=ACCENT_HOVER)
+        self.tabview = ctk.CTkTabview(outer, corner_radius=14)
         self.tabview.pack(fill="both", expand=True, pady=6)
         graph_tab = self.tabview.add("Graphique")
         log_tab = self.tabview.add("Journal")
 
         self.fig = Figure(figsize=(8, 4), dpi=100)
         self.ax = self.fig.add_subplot(111)
-        self.line, = self.ax.plot([], [], linewidth=1.4, color=ACCENT, label="Latence (ms)")
+        self.line, = self.ax.plot([], [], linewidth=1.4, color=self.accent, label="Latence (ms)")
         self.to_line, = self.ax.plot([], [], "x", markersize=7, color=ERR_COLOR, label="Timeouts")
         self.threshold_line = self.ax.axhline(0, linestyle="--", linewidth=1.0, color=WARN_COLOR, visible=False)
         self.ax.set_xlabel("Index du ping")
@@ -266,6 +327,41 @@ class PingApp:
 
         self.log_area = ctk.CTkTextbox(log_tab, corner_radius=8, font=self.mono_font, state="disabled")
         self.log_area.pack(fill="both", expand=True, padx=6, pady=6)
+
+    # ------------------------------------------------------------------
+    # Accent (changement à chaud)
+    # ------------------------------------------------------------------
+    def apply_accent(self, color):
+        self.accent = color
+        self.accent_hover = darken(color, 0.18)
+        self.outline_hover = (_blend(color, (255, 255, 255), 0.86),
+                              _blend(color, (0, 0, 0), 0.55))
+
+        self.btn_ping.configure(fg_color=self.accent, hover_color=self.accent_hover)
+        for b in self.outline_btns:
+            b.configure(border_color=self.accent, text_color=self.accent, hover_color=self.outline_hover)
+        self.continuous_switch.configure(progress_color=self.accent)
+        self.dark_switch.configure(progress_color=self.accent)
+        self.progress.configure(progress_color=self.accent)
+        self.tabview.configure(segmented_button_selected_color=self.accent,
+                               segmented_button_selected_hover_color=self.accent_hover)
+        self.line.set_color(self.accent)
+        self.canvas.draw_idle()
+        self.log_area.tag_config("info", foreground=self.accent)
+        self._highlight_swatch()
+
+    def _highlight_swatch(self):
+        border = "#ffffff" if ctk.get_appearance_mode() == "Dark" else "#1f2937"
+        for color, btn in self.swatches.items():
+            if color.lower() == self.accent.lower():
+                btn.configure(border_width=2, border_color=border)
+            else:
+                btn.configure(border_width=0)
+
+    def _pick_custom_accent(self):
+        result = colorchooser.askcolor(color=self.accent, title="Couleur d'accent")
+        if result and result[1]:
+            self.apply_accent(result[1])
 
     # ------------------------------------------------------------------
     # Thème (graphique + tags du journal selon le mode clair/sombre)
@@ -290,7 +386,8 @@ class PingApp:
         self.log_area.tag_config("ok", foreground=pal["fg"])
         self.log_area.tag_config("warn", foreground=WARN_COLOR)
         self.log_area.tag_config("err", foreground=ERR_COLOR)
-        self.log_area.tag_config("info", foreground=ACCENT)
+        self.log_area.tag_config("info", foreground=self.accent)
+        self._highlight_swatch()
 
     def _toggle_theme(self):
         ctk.set_appearance_mode("dark" if self.dark_var.get() else "light")
@@ -380,11 +477,11 @@ class PingApp:
         if self.continuous:
             self.progress.configure(mode="indeterminate")
             self.progress.start()
-            self.set_status(f"Ping en continu vers {host}…", ACCENT)
+            self.set_status(f"Ping en continu vers {host}…", self.accent)
         else:
             self.progress.configure(mode="determinate")
             self.progress.set(0)
-            self.set_status(f"Ping vers {host} pour {self.duration}s…", ACCENT)
+            self.set_status(f"Ping vers {host} pour {self.duration}s…", self.accent)
         self.log(f"--- Démarrage du Ping vers {host} "
                  f"({'continu' if self.continuous else str(self.duration) + 's'}) ---", "info")
 
@@ -551,7 +648,7 @@ class PingApp:
             return
         self.btn_analyze.configure(state="disabled")
         self.btn_ping.configure(state="disabled")
-        self.set_status("Analyse en cours…", ACCENT)
+        self.set_status("Analyse en cours…", self.accent)
         self.log("--- Démarrage de l'analyse ---", "info")
         threading.Thread(target=self._analyze_worker,
                          args=(log_file, self.csv_file_var.get().strip(),
@@ -592,7 +689,7 @@ class PingApp:
 
         fig1 = Figure(figsize=(12, 5), dpi=100)
         ax1 = fig1.add_subplot(111)
-        ax1.plot(range(len(y)), y, color=ACCENT, linewidth=0.9, label="Latence (ms)")
+        ax1.plot(range(len(y)), y, color=self.accent, linewidth=0.9, label="Latence (ms)")
         ax1.scatter(timeouts, [0] * len(timeouts), color=ERR_COLOR, marker="x", label="Timeouts")
         ax1.set_xlabel("Index du ping")
         ax1.set_ylabel("Latence (ms)")
@@ -607,7 +704,7 @@ class PingApp:
         if latencies:
             fig2 = Figure(figsize=(7, 5), dpi=100)
             ax2 = fig2.add_subplot(111)
-            ax2.hist(latencies, bins=50, color=ACCENT, edgecolor="black")
+            ax2.hist(latencies, bins=50, color=self.accent, edgecolor="black")
             ax2.set_xlabel("Latence (ms)")
             ax2.set_ylabel("Nombre")
             ax2.set_title("Distribution de la latence")
@@ -645,12 +742,6 @@ class PingApp:
         self.set_status("Erreur lors de l'analyse", ERR_COLOR)
         self.btn_analyze.configure(state="normal")
         self.btn_ping.configure(state="normal")
-
-
-def resource_path(rel):
-    """Chemin d'une ressource, compatible exécution normale et PyInstaller (.exe)."""
-    base = getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__)))
-    return os.path.join(base, rel)
 
 
 if __name__ == "__main__":
