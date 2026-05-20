@@ -1,0 +1,9 @@
+# Dépendances d'exécution
+customtkinter>=5.2.2
+matplotlib>=3.10
+
+# Pour compiler l'exécutable (.exe), optionnel :
+#   pip install pyinstaller
+#   python -m PyInstaller --onefile --windowed --name PingTester \
+#       --icon ping_tool_ico.ico --add-data "ping_tool_ico.ico;." \
+#       --collect-all customtkinter ping_tool_gui2.py

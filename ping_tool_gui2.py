@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, scrolledtext, messagebox, filedialog
+from tkinter import messagebox, filedialog
 import subprocess
 import datetime
 import time
@@ -12,6 +12,8 @@ import os
 import sys
 from pathlib import Path
 
+import customtkinter as ctk
+
 import matplotlib
 matplotlib.use("TkAgg")
 from matplotlib.figure import Figure
@@ -23,21 +25,20 @@ TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
 LATENCY_RE = re.compile(r"(?:temps|time)[=<]?\s*(\d+)\s*ms", re.IGNORECASE)
 TIMEOUT_RE = re.compile(r"(D[ée]lai d|Request timed out|h[ôo]te de destination|Destination host)", re.IGNORECASE)
 
-# --- Palettes de couleurs (thème clair / sombre) ---
-THEMES = {
-    "light": {
-        "bg": "#f4f4f5", "fg": "#1a1a1a", "entry": "#ffffff",
-        "text_bg": "#ffffff", "text_fg": "#1a1a1a", "accent": "#0078d4",
-        "plot_bg": "#ffffff", "plot_fg": "#1a1a1a", "grid": "#d4d4d8",
-        "ok": "#1f9d55", "warn": "#d97706", "err": "#dc2626", "line": "#2563eb",
-    },
-    "dark": {
-        "bg": "#23272e", "fg": "#e4e4e7", "entry": "#2f343c",
-        "text_bg": "#1b1e24", "text_fg": "#e4e4e7", "accent": "#4ea1ff",
-        "plot_bg": "#1b1e24", "plot_fg": "#e4e4e7", "grid": "#3a3f47",
-        "ok": "#34d399", "warn": "#fbbf24", "err": "#f87171", "line": "#60a5fa",
-    },
-}
+# --- Couleurs (accent indigo/violet) ---
+ACCENT = "#6366f1"          # indigo-500
+ACCENT_HOVER = "#4f46e5"    # indigo-600
+DANGER = "#ef4444"          # red-500
+DANGER_HOVER = "#dc2626"    # red-600
+OK_COLOR = "#22c55e"
+WARN_COLOR = "#f59e0b"
+ERR_COLOR = "#ef4444"
+IDLE_COLOR = "#9ca3af"
+OUTLINE_HOVER = ("#eef2ff", "#312e81")  # (clair, sombre)
+
+# Palettes du graphique matplotlib selon le mode
+LIGHT_PLOT = {"fig": "#dbdbdb", "ax": "#ffffff", "fg": "#1f2937", "grid": "#c8c8c8"}
+DARK_PLOT = {"fig": "#2b2b2b", "ax": "#1e1e1e", "fg": "#e5e7eb", "grid": "#404040"}
 
 
 def extract_latency(text):
@@ -100,10 +101,9 @@ class PingApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Outil de Ping & Analyse")
-        self.root.geometry("920x840")
-        self.root.minsize(760, 640)
+        self.root.geometry("960x880")
+        self.root.minsize(820, 720)
 
-        self.theme_name = "light"
         self.ping_queue = queue.Queue()
         self.stop_event = threading.Event()
         self.ping_running = False
@@ -119,187 +119,199 @@ class PingApp:
         self.live_latencies = []
 
         self._build_widgets()
-        self.apply_theme()
+        self._apply_theme()
 
     # ------------------------------------------------------------------
     # Construction de l'interface
     # ------------------------------------------------------------------
     def _build_widgets(self):
-        # ---- Paramètres ----
-        p_frame = ttk.LabelFrame(self.root, text="Paramètres", padding=10)
-        p_frame.pack(fill="x", padx=10, pady=(8, 4))
-        p_frame.columnconfigure(1, weight=1)
-        p_frame.columnconfigure(3, weight=1)
+        self.title_font = ctk.CTkFont(size=20, weight="bold")
+        self.section_font = ctk.CTkFont(size=14, weight="bold")
+        self.mono_font = ctk.CTkFont(family="Consolas", size=12)
 
-        ttk.Label(p_frame, text="Hôte (IP/Domaine):").grid(row=0, column=0, sticky="w")
+        outer = ctk.CTkFrame(self.root, fg_color="transparent")
+        outer.pack(fill="both", expand=True, padx=16, pady=12)
+
+        # ---- En-tête ----
+        header = ctk.CTkFrame(outer, fg_color="transparent")
+        header.pack(fill="x", pady=(0, 10))
+        ctk.CTkLabel(header, text="📡  Outil de Ping & Analyse",
+                     font=self.title_font).pack(side="left")
+        self.dark_var = tk.BooleanVar(value=False)
+        self.dark_switch = ctk.CTkSwitch(header, text="Mode sombre", variable=self.dark_var,
+                                         command=self._toggle_theme, progress_color=ACCENT)
+        self.dark_switch.pack(side="right")
+
+        # ---- Carte Paramètres ----
+        p_card = ctk.CTkFrame(outer, corner_radius=14)
+        p_card.pack(fill="x", pady=6)
+        ctk.CTkLabel(p_card, text="Paramètres", font=self.section_font).grid(
+            row=0, column=0, columnspan=4, sticky="w", padx=16, pady=(12, 6))
+        p_card.columnconfigure(1, weight=1)
+        p_card.columnconfigure(3, weight=1)
+
+        ctk.CTkLabel(p_card, text="Hôte (IP / Domaine)").grid(row=1, column=0, sticky="w", padx=(16, 8), pady=6)
         self.host_var = tk.StringVar(value="8.8.8.8")
-        ttk.Entry(p_frame, textvariable=self.host_var).grid(row=0, column=1, sticky="ew", padx=5, pady=2)
+        ctk.CTkEntry(p_card, textvariable=self.host_var, corner_radius=8).grid(
+            row=1, column=1, sticky="ew", padx=(0, 16), pady=6)
 
-        ttk.Label(p_frame, text="Durée (secondes):").grid(row=0, column=2, sticky="w", padx=(10, 0))
+        ctk.CTkLabel(p_card, text="Durée (s)").grid(row=1, column=2, sticky="w", padx=(0, 8), pady=6)
         self.duration_var = tk.StringVar(value="60")
-        self.duration_entry = ttk.Entry(p_frame, textvariable=self.duration_var, width=10)
-        self.duration_entry.grid(row=0, column=3, sticky="w", padx=5, pady=2)
+        self.duration_entry = ctk.CTkEntry(p_card, textvariable=self.duration_var, width=110, corner_radius=8)
+        self.duration_entry.grid(row=1, column=3, sticky="w", padx=(0, 16), pady=6)
 
         self.continuous_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(p_frame, text="Ping en continu", variable=self.continuous_var,
-                        command=self._toggle_continuous).grid(row=1, column=0, sticky="w", pady=2)
+        self.continuous_switch = ctk.CTkSwitch(
+            p_card, text="Ping en continu", variable=self.continuous_var,
+            command=self._toggle_continuous, progress_color=ACCENT)
+        self.continuous_switch.grid(row=2, column=0, columnspan=2, sticky="w", padx=16, pady=(6, 14))
 
-        ttk.Label(p_frame, text="Seuil d'alerte (ms, 0=off):").grid(row=1, column=2, sticky="w", padx=(10, 0))
+        ctk.CTkLabel(p_card, text="Seuil d'alerte (ms, 0=off)").grid(row=2, column=2, sticky="w", padx=(0, 8), pady=(6, 14))
         self.threshold_var = tk.StringVar(value="100")
-        ttk.Entry(p_frame, textvariable=self.threshold_var, width=10).grid(row=1, column=3, sticky="w", padx=5, pady=2)
+        ctk.CTkEntry(p_card, textvariable=self.threshold_var, width=110, corner_radius=8).grid(
+            row=2, column=3, sticky="w", padx=(0, 16), pady=(6, 14))
 
-        # ---- Fichiers ----
-        f_frame = ttk.LabelFrame(self.root, text="Fichiers", padding=10)
-        f_frame.pack(fill="x", padx=10, pady=4)
-        f_frame.columnconfigure(1, weight=1)
+        # ---- Carte Fichiers ----
+        f_card = ctk.CTkFrame(outer, corner_radius=14)
+        f_card.pack(fill="x", pady=6)
+        ctk.CTkLabel(f_card, text="Fichiers", font=self.section_font).grid(
+            row=0, column=0, columnspan=3, sticky="w", padx=16, pady=(12, 6))
+        f_card.columnconfigure(1, weight=1)
 
-        ttk.Label(f_frame, text="Fichier Log:").grid(row=0, column=0, sticky="w")
+        ctk.CTkLabel(f_card, text="Fichier Log").grid(row=1, column=0, sticky="w", padx=(16, 8), pady=6)
         self.log_file_var = tk.StringVar(value="ping_log.txt")
-        ttk.Entry(f_frame, textvariable=self.log_file_var).grid(row=0, column=1, sticky="ew", padx=5, pady=2)
-        ttk.Button(f_frame, text="Parcourir…", command=self._browse_log).grid(row=0, column=2, padx=2)
+        ctk.CTkEntry(f_card, textvariable=self.log_file_var, corner_radius=8).grid(
+            row=1, column=1, sticky="ew", pady=6)
+        ctk.CTkButton(f_card, text="Parcourir…", width=110, corner_radius=18,
+                      fg_color="transparent", border_width=2, border_color=ACCENT,
+                      text_color=ACCENT, hover_color=OUTLINE_HOVER,
+                      command=self._browse_log).grid(row=1, column=2, padx=16, pady=6)
 
-        ttk.Label(f_frame, text="Sortie CSV:").grid(row=1, column=0, sticky="w")
+        ctk.CTkLabel(f_card, text="Sortie CSV").grid(row=2, column=0, sticky="w", padx=(16, 8), pady=6)
         self.csv_file_var = tk.StringVar(value="ping_results.csv")
-        ttk.Entry(f_frame, textvariable=self.csv_file_var).grid(row=1, column=1, sticky="ew", padx=5, pady=2)
-        ttk.Button(f_frame, text="Parcourir…", command=self._browse_csv).grid(row=1, column=2, padx=2)
+        ctk.CTkEntry(f_card, textvariable=self.csv_file_var, corner_radius=8).grid(
+            row=2, column=1, sticky="ew", pady=6)
+        ctk.CTkButton(f_card, text="Parcourir…", width=110, corner_radius=18,
+                      fg_color="transparent", border_width=2, border_color=ACCENT,
+                      text_color=ACCENT, hover_color=OUTLINE_HOVER,
+                      command=self._browse_csv).grid(row=2, column=2, padx=16, pady=6)
 
-        ttk.Label(f_frame, text="Préfixe Graphiques:").grid(row=2, column=0, sticky="w")
+        ctk.CTkLabel(f_card, text="Préfixe Graphiques").grid(row=3, column=0, sticky="w", padx=(16, 8), pady=(6, 14))
         self.plot_prefix_var = tk.StringVar(value="ping")
-        ttk.Entry(f_frame, textvariable=self.plot_prefix_var).grid(row=2, column=1, sticky="ew", padx=5, pady=2)
+        ctk.CTkEntry(f_card, textvariable=self.plot_prefix_var, corner_radius=8).grid(
+            row=3, column=1, sticky="ew", pady=(6, 14))
 
-        # ---- Actions ----
-        btn_frame = ttk.Frame(self.root, padding=(10, 4))
-        btn_frame.pack(fill="x", padx=10)
+        # ---- Boutons d'action ----
+        btn_row = ctk.CTkFrame(outer, fg_color="transparent")
+        btn_row.pack(fill="x", pady=8)
+        for i in range(4):
+            btn_row.columnconfigure(i, weight=1, uniform="btn")
 
-        self.btn_ping = ttk.Button(btn_frame, text="▶ Lancer Ping", command=self.start_ping)
-        self.btn_ping.pack(side="left", fill="x", expand=True, padx=3)
-        self.btn_stop = ttk.Button(btn_frame, text="■ Stop", command=self.stop_ping, state="disabled")
-        self.btn_stop.pack(side="left", fill="x", expand=True, padx=3)
-        self.btn_analyze = ttk.Button(btn_frame, text="📊 Analyser", command=self.start_analyze)
-        self.btn_analyze.pack(side="left", fill="x", expand=True, padx=3)
-        self.btn_clear = ttk.Button(btn_frame, text="🗑 Effacer", command=self.clear_all)
-        self.btn_clear.pack(side="left", fill="x", expand=True, padx=3)
-        self.btn_theme = ttk.Button(btn_frame, text="🌙 Thème", command=self.toggle_theme)
-        self.btn_theme.pack(side="left", fill="x", expand=True, padx=3)
+        self.btn_ping = ctk.CTkButton(btn_row, text="▶  Lancer Ping", height=42, corner_radius=18,
+                                      font=self.section_font, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+                                      command=self.start_ping)
+        self.btn_ping.grid(row=0, column=0, sticky="ew", padx=6)
+
+        self.btn_stop = ctk.CTkButton(btn_row, text="■  Stop", height=42, corner_radius=18,
+                                      font=self.section_font, fg_color=DANGER, hover_color=DANGER_HOVER,
+                                      state="disabled", command=self.stop_ping)
+        self.btn_stop.grid(row=0, column=1, sticky="ew", padx=6)
+
+        self.btn_analyze = ctk.CTkButton(btn_row, text="📊  Analyser", height=42, corner_radius=18,
+                                         font=self.section_font, fg_color="transparent", border_width=2,
+                                         border_color=ACCENT, text_color=ACCENT, hover_color=OUTLINE_HOVER,
+                                         command=self.start_analyze)
+        self.btn_analyze.grid(row=0, column=2, sticky="ew", padx=6)
+
+        self.btn_clear = ctk.CTkButton(btn_row, text="🗑  Effacer", height=42, corner_radius=18,
+                                       font=self.section_font, fg_color="transparent", border_width=2,
+                                       border_color=ACCENT, text_color=ACCENT, hover_color=OUTLINE_HOVER,
+                                       command=self.clear_all)
+        self.btn_clear.grid(row=0, column=3, sticky="ew", padx=6)
 
         # ---- Barre de statut ----
-        status_frame = ttk.Frame(self.root, padding=(10, 4))
-        status_frame.pack(fill="x", padx=10)
-
-        self.status_dot = tk.Canvas(status_frame, width=16, height=16, highlightthickness=0)
-        self.status_dot.pack(side="left", padx=(0, 6))
-        self._dot = self.status_dot.create_oval(3, 3, 13, 13, fill="#9ca3af", outline="")
-
+        status_card = ctk.CTkFrame(outer, corner_radius=14)
+        status_card.pack(fill="x", pady=6)
+        self.status_dot = ctk.CTkFrame(status_card, width=14, height=14, corner_radius=7, fg_color=IDLE_COLOR)
+        self.status_dot.grid(row=0, column=0, padx=(16, 8), pady=12)
         self.status_var = tk.StringVar(value="Prêt.")
-        ttk.Label(status_frame, textvariable=self.status_var).pack(side="left")
-
+        ctk.CTkLabel(status_card, textvariable=self.status_var).grid(row=0, column=1, sticky="w", pady=12)
+        status_card.columnconfigure(2, weight=1)
         self.stats_var = tk.StringVar(value="Envoyés: 0   Perdus: 0 (0.0%)   Dernière: —   Moy: —")
-        ttk.Label(status_frame, textvariable=self.stats_var).pack(side="right")
+        ctk.CTkLabel(status_card, textvariable=self.stats_var, font=self.mono_font).grid(
+            row=0, column=2, sticky="e", padx=16, pady=12)
 
-        self.progress = ttk.Progressbar(self.root, mode="determinate", maximum=100)
-        self.progress.pack(fill="x", padx=10, pady=(0, 4))
+        self.progress = ctk.CTkProgressBar(outer, corner_radius=8, progress_color=ACCENT)
+        self.progress.set(0)
+        self.progress.pack(fill="x", pady=(2, 8))
 
         # ---- Onglets : Graphique / Journal ----
-        self.notebook = ttk.Notebook(self.root)
-        self.notebook.pack(fill="both", expand=True, padx=10, pady=(4, 10))
-
-        graph_tab = ttk.Frame(self.notebook)
-        self.notebook.add(graph_tab, text="Graphique")
+        self.tabview = ctk.CTkTabview(outer, corner_radius=14,
+                                      segmented_button_selected_color=ACCENT,
+                                      segmented_button_selected_hover_color=ACCENT_HOVER)
+        self.tabview.pack(fill="both", expand=True, pady=6)
+        graph_tab = self.tabview.add("Graphique")
+        log_tab = self.tabview.add("Journal")
 
         self.fig = Figure(figsize=(8, 4), dpi=100)
         self.ax = self.fig.add_subplot(111)
-        self.line, = self.ax.plot([], [], linewidth=1.0, label="Latence (ms)")
-        self.to_line, = self.ax.plot([], [], "x", markersize=7, label="Timeouts")
-        self.threshold_line = self.ax.axhline(0, linestyle="--", linewidth=0.9, visible=False)
+        self.line, = self.ax.plot([], [], linewidth=1.4, color=ACCENT, label="Latence (ms)")
+        self.to_line, = self.ax.plot([], [], "x", markersize=7, color=ERR_COLOR, label="Timeouts")
+        self.threshold_line = self.ax.axhline(0, linestyle="--", linewidth=1.0, color=WARN_COLOR, visible=False)
         self.ax.set_xlabel("Index du ping")
         self.ax.set_ylabel("Latence (ms)")
         self.ax.set_title("Latence en direct")
-        self.ax.legend(loc="upper right", fontsize=8)
         self.canvas = FigureCanvasTkAgg(self.fig, master=graph_tab)
-        self.canvas.get_tk_widget().pack(fill="both", expand=True)
+        self.canvas.get_tk_widget().pack(fill="both", expand=True, padx=6, pady=6)
 
-        log_tab = ttk.Frame(self.notebook)
-        self.notebook.add(log_tab, text="Journal")
-        self.log_area = scrolledtext.ScrolledText(log_tab, state="disabled", height=12)
-        self.log_area.pack(fill="both", expand=True)
+        self.log_area = ctk.CTkTextbox(log_tab, corner_radius=8, font=self.mono_font, state="disabled")
+        self.log_area.pack(fill="both", expand=True, padx=6, pady=6)
 
     # ------------------------------------------------------------------
-    # Thème
+    # Thème (graphique + tags du journal selon le mode clair/sombre)
     # ------------------------------------------------------------------
-    def apply_theme(self):
-        c = THEMES[self.theme_name]
-        style = ttk.Style()
-        try:
-            style.theme_use("clam")
-        except tk.TclError:
-            pass
+    def _apply_theme(self):
+        dark = ctk.get_appearance_mode() == "Dark"
+        pal = DARK_PLOT if dark else LIGHT_PLOT
 
-        style.configure(".", background=c["bg"], foreground=c["fg"])
-        style.configure("TFrame", background=c["bg"])
-        style.configure("TLabel", background=c["bg"], foreground=c["fg"])
-        style.configure("TLabelframe", background=c["bg"], foreground=c["fg"])
-        style.configure("TLabelframe.Label", background=c["bg"], foreground=c["fg"])
-        style.configure("TCheckbutton", background=c["bg"], foreground=c["fg"])
-        style.map("TCheckbutton", background=[("active", c["bg"])])
-        style.configure("TButton", background=c["entry"], foreground=c["fg"], padding=5)
-        style.map("TButton",
-                  background=[("active", c["accent"]), ("disabled", c["bg"])],
-                  foreground=[("active", "#ffffff")])
-        style.configure("TEntry", fieldbackground=c["entry"], foreground=c["fg"],
-                        insertcolor=c["fg"])
-        style.configure("TNotebook", background=c["bg"])
-        style.configure("TNotebook.Tab", background=c["entry"], foreground=c["fg"], padding=(12, 4))
-        style.map("TNotebook.Tab", background=[("selected", c["accent"])],
-                  foreground=[("selected", "#ffffff")])
-        style.configure("TProgressbar", background=c["accent"], troughcolor=c["entry"])
-
-        self.root.configure(bg=c["bg"])
-        self.status_dot.configure(bg=c["bg"])
-        self.log_area.configure(bg=c["text_bg"], fg=c["text_fg"], insertbackground=c["fg"])
-        self.log_area.tag_config("ok", foreground=c["text_fg"])
-        self.log_area.tag_config("warn", foreground=c["warn"])
-        self.log_area.tag_config("err", foreground=c["err"])
-        self.log_area.tag_config("info", foreground=c["accent"])
-
-        # Couleurs du graphique
-        self.fig.set_facecolor(c["plot_bg"])
-        self.ax.set_facecolor(c["plot_bg"])
+        self.fig.set_facecolor(pal["fig"])
+        self.ax.set_facecolor(pal["ax"])
         for spine in self.ax.spines.values():
-            spine.set_color(c["plot_fg"])
-        self.ax.tick_params(colors=c["plot_fg"])
-        self.ax.xaxis.label.set_color(c["plot_fg"])
-        self.ax.yaxis.label.set_color(c["plot_fg"])
-        self.ax.title.set_color(c["plot_fg"])
-        self.ax.grid(True, color=c["grid"], linewidth=0.5)
-        self.line.set_color(c["line"])
-        self.to_line.set_color(c["err"])
-        self.threshold_line.set_color(c["warn"])
+            spine.set_color(pal["grid"])
+        self.ax.tick_params(colors=pal["fg"])
+        self.ax.xaxis.label.set_color(pal["fg"])
+        self.ax.yaxis.label.set_color(pal["fg"])
+        self.ax.title.set_color(pal["fg"])
+        self.ax.grid(True, color=pal["grid"], linewidth=0.5)
+        self.ax.legend(loc="upper right", fontsize=8, facecolor=pal["ax"],
+                       edgecolor=pal["grid"], labelcolor=pal["fg"])
         self.canvas.draw_idle()
 
-    def toggle_theme(self):
-        self.theme_name = "dark" if self.theme_name == "light" else "light"
-        self.btn_theme.config(text="☀ Thème" if self.theme_name == "dark" else "🌙 Thème")
-        self.apply_theme()
+        self.log_area.tag_config("ok", foreground=pal["fg"])
+        self.log_area.tag_config("warn", foreground=WARN_COLOR)
+        self.log_area.tag_config("err", foreground=ERR_COLOR)
+        self.log_area.tag_config("info", foreground=ACCENT)
+
+    def _toggle_theme(self):
+        ctk.set_appearance_mode("dark" if self.dark_var.get() else "light")
+        self._apply_theme()
 
     # ------------------------------------------------------------------
     # Petites aides UI
     # ------------------------------------------------------------------
     def log(self, message, tag="ok"):
-        self.log_area.config(state="normal")
-        self.log_area.insert(tk.END, message + "\n", tag)
-        self.log_area.see(tk.END)
-        self.log_area.config(state="disabled")
+        self.log_area.configure(state="normal")
+        self.log_area.insert("end", message + "\n", tag)
+        self.log_area.see("end")
+        self.log_area.configure(state="disabled")
 
     def set_status(self, text, color=None):
         self.status_var.set(text)
         if color:
-            self.status_dot.itemconfig(self._dot, fill=color)
+            self.status_dot.configure(fg_color=color)
 
     def _toggle_continuous(self):
-        if self.continuous_var.get():
-            self.duration_entry.config(state="disabled")
-        else:
-            self.duration_entry.config(state="normal")
+        self.duration_entry.configure(state="disabled" if self.continuous_var.get() else "normal")
 
     def _browse_log(self):
         path = filedialog.asksaveasfilename(
@@ -349,13 +361,11 @@ class PingApp:
             messagebox.showerror("Erreur", "Veuillez indiquer un fichier log.")
             return
 
-        # Réinitialisation de l'état
         self._reset_live_data()
         self.stop_event.clear()
         self.ping_running = True
         self.start_time = time.time()
 
-        # Ligne de seuil
         thr = self._get_threshold()
         if thr > 0:
             self.threshold_line.set_ydata([thr, thr])
@@ -363,18 +373,18 @@ class PingApp:
         else:
             self.threshold_line.set_visible(False)
 
-        # UI
-        self.btn_ping.config(state="disabled")
-        self.btn_analyze.config(state="disabled")
-        self.btn_clear.config(state="disabled")
-        self.btn_stop.config(state="normal")
+        self.btn_ping.configure(state="disabled")
+        self.btn_analyze.configure(state="disabled")
+        self.btn_clear.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
         if self.continuous:
-            self.progress.config(mode="indeterminate")
-            self.progress.start(15)
-            self.set_status(f"Ping en continu vers {host}…", THEMES[self.theme_name]["accent"])
+            self.progress.configure(mode="indeterminate")
+            self.progress.start()
+            self.set_status(f"Ping en continu vers {host}…", ACCENT)
         else:
-            self.progress.config(mode="determinate", value=0)
-            self.set_status(f"Ping vers {host} pour {self.duration}s…", THEMES[self.theme_name]["accent"])
+            self.progress.configure(mode="determinate")
+            self.progress.set(0)
+            self.set_status(f"Ping vers {host} pour {self.duration}s…", ACCENT)
         self.log(f"--- Démarrage du Ping vers {host} "
                  f"({'continu' if self.continuous else str(self.duration) + 's'}) ---", "info")
 
@@ -387,7 +397,7 @@ class PingApp:
         if self.ping_running:
             self.stop_event.set()
             self.set_status("Arrêt en cours…")
-            self.btn_stop.config(state="disabled")
+            self.btn_stop.configure(state="disabled")
 
     def _ping_worker(self, host, duration, continuous, log_file):
         start = time.time()
@@ -416,7 +426,6 @@ class PingApp:
 
                     if not continuous and time.time() - start > duration:
                         break
-                    # Pause ~1s, mais réactive à l'arrêt
                     for _ in range(10):
                         if self.stop_event.is_set():
                             break
@@ -434,8 +443,8 @@ class PingApp:
 
         if self.ping_running:
             if not self.continuous and self.duration > 0:
-                pct = min(100, (time.time() - self.start_time) / self.duration * 100)
-                self.progress.config(value=pct)
+                frac = min(1.0, (time.time() - self.start_time) / self.duration)
+                self.progress.set(frac)
             self.root.after(120, self._process_queue)
 
     def _handle_msg(self, msg):
@@ -444,22 +453,21 @@ class PingApp:
             _, now, lat, status = msg
             self.count_sent += 1
             thr = self._get_threshold()
-            c = THEMES[self.theme_name]
 
             if status == "OK":
                 self.gy.append(lat)
                 self.live_latencies.append(lat)
                 if thr > 0 and lat >= thr:
-                    self.set_status(f"Latence élevée: {lat} ms", c["warn"])
+                    self.set_status(f"Latence élevée: {lat} ms", WARN_COLOR)
                     self.log(f"{now} - temps={lat} ms  ⚠ au-dessus du seuil", "warn")
                 else:
-                    self.set_status("En cours…", c["ok"])
+                    self.set_status("En cours…", OK_COLOR)
                     self.log(f"{now} - temps={lat} ms", "ok")
             else:
                 self.count_lost += 1
                 self.gy.append(None)
                 self.gto_x.append(len(self.gy) - 1)
-                self.set_status("Timeout / perte de paquet", c["err"])
+                self.set_status("Timeout / perte de paquet", ERR_COLOR)
                 self.log(f"{now} - DÉLAI DÉPASSÉ (timeout)", "err")
 
             self._update_stats_label()
@@ -467,7 +475,7 @@ class PingApp:
 
         elif kind == "error":
             self.log(f"ERREUR: {msg[1]}", "err")
-            self.set_status("Erreur lors du ping", THEMES[self.theme_name]["err"])
+            self.set_status("Erreur lors du ping", ERR_COLOR)
 
         elif kind == "done":
             self._finish_ping(msg[1])
@@ -475,15 +483,15 @@ class PingApp:
     def _finish_ping(self, log_file):
         self.ping_running = False
         self.progress.stop()
-        self.progress.config(mode="determinate", value=0)
-        self.btn_ping.config(state="normal")
-        self.btn_analyze.config(state="normal")
-        self.btn_clear.config(state="normal")
-        self.btn_stop.config(state="disabled")
+        self.progress.configure(mode="determinate")
+        self.progress.set(0)
+        self.btn_ping.configure(state="normal")
+        self.btn_analyze.configure(state="normal")
+        self.btn_clear.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
         s = build_summary([[None, v, "OK" if v is not None else "TIMEOUT"] for v in self.gy])
         self.set_status(
-            f"Terminé — {s['total']} pings, {s['lost']} perdus ({s['loss_pct']:.1f}%).",
-            "#9ca3af")
+            f"Terminé — {s['total']} pings, {s['lost']} perdus ({s['loss_pct']:.1f}%).", IDLE_COLOR)
         self.log(f"--- Ping terminé. Données : {log_file} ---", "info")
 
     # ------------------------------------------------------------------
@@ -528,10 +536,10 @@ class PingApp:
         if self.ping_running:
             return
         self._reset_live_data()
-        self.log_area.config(state="normal")
-        self.log_area.delete("1.0", tk.END)
-        self.log_area.config(state="disabled")
-        self.set_status("Prêt.", "#9ca3af")
+        self.log_area.configure(state="normal")
+        self.log_area.delete("1.0", "end")
+        self.log_area.configure(state="disabled")
+        self.set_status("Prêt.", IDLE_COLOR)
 
     # ------------------------------------------------------------------
     # Analyse hors-ligne d'un fichier log existant
@@ -541,9 +549,9 @@ class PingApp:
         if not Path(log_file).exists():
             messagebox.showerror("Erreur", f"Le fichier {log_file} n'existe pas.")
             return
-        self.btn_analyze.config(state="disabled")
-        self.btn_ping.config(state="disabled")
-        self.set_status("Analyse en cours…", THEMES[self.theme_name]["accent"])
+        self.btn_analyze.configure(state="disabled")
+        self.btn_ping.configure(state="disabled")
+        self.set_status("Analyse en cours…", ACCENT)
         self.log("--- Démarrage de l'analyse ---", "info")
         threading.Thread(target=self._analyze_worker,
                          args=(log_file, self.csv_file_var.get().strip(),
@@ -579,14 +587,13 @@ class PingApp:
                 w.writerow(["Gigue / jitter (ms)", f"{s['jitter']:.2f}"])
 
     def _save_plots(self, rows, s, plot_prefix):
-        c = THEMES["light"]  # PNG toujours en clair pour la lisibilité
         y = [r[1] if r[1] is not None else float("nan") for r in rows]
         timeouts = [i for i, r in enumerate(rows) if r[1] is None]
 
         fig1 = Figure(figsize=(12, 5), dpi=100)
         ax1 = fig1.add_subplot(111)
-        ax1.plot(range(len(y)), y, color=c["line"], linewidth=0.8, label="Latence (ms)")
-        ax1.scatter(timeouts, [0] * len(timeouts), color=c["err"], marker="x", label="Timeouts")
+        ax1.plot(range(len(y)), y, color=ACCENT, linewidth=0.9, label="Latence (ms)")
+        ax1.scatter(timeouts, [0] * len(timeouts), color=ERR_COLOR, marker="x", label="Timeouts")
         ax1.set_xlabel("Index du ping")
         ax1.set_ylabel("Latence (ms)")
         ax1.set_title("Latence dans le temps")
@@ -600,7 +607,7 @@ class PingApp:
         if latencies:
             fig2 = Figure(figsize=(7, 5), dpi=100)
             ax2 = fig2.add_subplot(111)
-            ax2.hist(latencies, bins=50, color=c["ok"], edgecolor="black")
+            ax2.hist(latencies, bins=50, color=ACCENT, edgecolor="black")
             ax2.set_xlabel("Latence (ms)")
             ax2.set_ylabel("Nombre")
             ax2.set_title("Distribution de la latence")
@@ -609,7 +616,6 @@ class PingApp:
             fig2.savefig(f"{plot_prefix}_hist.png")
 
     def _show_analysis_result(self, rows, s, csv_file, plot_prefix):
-        # Charger les données dans le graphique en direct
         self.gy = [r[1] for r in rows]
         self.gto_x = [i for i, r in enumerate(rows) if r[1] is None]
         self.live_latencies = [r[1] for r in rows if r[1] is not None]
@@ -629,16 +635,16 @@ class PingApp:
         self.log(f"CSV sauvegardé: {csv_file}", "info")
         self.log(f"Graphiques: {plot_prefix}_latency.png, {plot_prefix}_hist.png", "info")
         self.set_status(
-            f"Analyse terminée — {s['total']} pings, {s['loss_pct']:.1f}% de perte.", "#9ca3af")
-        self.btn_analyze.config(state="normal")
-        self.btn_ping.config(state="normal")
+            f"Analyse terminée — {s['total']} pings, {s['loss_pct']:.1f}% de perte.", IDLE_COLOR)
+        self.btn_analyze.configure(state="normal")
+        self.btn_ping.configure(state="normal")
         messagebox.showinfo("Terminé", "Analyse terminée avec succès !")
 
     def _analysis_error(self, message):
         self.log(f"ERREUR pendant l'analyse: {message}", "err")
-        self.set_status("Erreur lors de l'analyse", THEMES[self.theme_name]["err"])
-        self.btn_analyze.config(state="normal")
-        self.btn_ping.config(state="normal")
+        self.set_status("Erreur lors de l'analyse", ERR_COLOR)
+        self.btn_analyze.configure(state="normal")
+        self.btn_ping.configure(state="normal")
 
 
 def resource_path(rel):
@@ -648,7 +654,9 @@ def resource_path(rel):
 
 
 if __name__ == "__main__":
-    root = tk.Tk()
+    ctk.set_appearance_mode("light")
+    ctk.set_default_color_theme("blue")
+    root = ctk.CTk()
     try:
         root.iconbitmap(resource_path("ping_tool_ico.ico"))
     except Exception:
