@@ -11,10 +11,11 @@ import threading
 import queue
 import os
 import sys
+import ctypes
 from pathlib import Path
 
 import customtkinter as ctk
-from PIL import Image, ImageDraw
+from PIL import Image
 
 import matplotlib
 matplotlib.use("TkAgg")
@@ -26,11 +27,6 @@ try:
     import winsound
 except Exception:
     winsound = None
-
-try:
-    import pystray
-except Exception:
-    pystray = None
 
 # --- Expressions régulières partagées (français + anglais) ---
 TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
@@ -65,7 +61,7 @@ DEFAULT_CONFIG = {
     "threshold": "100", "interval": "1.0",
     "log_file": "ping_log.txt", "csv_file": "ping_results.csv", "plot_prefix": "ping",
     "dark": False, "accent": DEFAULT_ACCENT,
-    "alerts": True, "tray": True,
+    "alerts": True,
 }
 
 
@@ -256,20 +252,13 @@ class PingApp:
         self.hosts_state = {}
         self.host_order = []
         self.last_alert = {}
-        self.tray = None
-        self._tray_hint_shown = False
+        self._min_hint_shown = False
 
         self._build_widgets()
         self._apply_config_to_widgets()
         self.apply_accent(self.accent)
         self._apply_theme()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
-        # Icône de tray permanente (si activée) : état visible en continu
-        if self.tray_var.get() and pystray is not None:
-            try:
-                self._ensure_tray()
-            except Exception:
-                pass
 
     # ------------------------------------------------------------------
     # Construction de l'interface
@@ -292,6 +281,10 @@ class PingApp:
             self.logo_img = None
         ctk.CTkLabel(header, image=self.logo_img, text="  Outil de Ping & Analyse",
                      compound="left", font=self.title_font).pack(side="left")
+
+        self.btn_quit = ctk.CTkButton(header, text="Quitter", width=84, height=28, corner_radius=14,
+                                      fg_color=DANGER, hover_color=DANGER_HOVER, command=self._real_quit)
+        self.btn_quit.pack(side="right", padx=(10, 0))
 
         self.dark_var = tk.BooleanVar(value=bool(self.config.get("dark")))
         self.dark_switch = ctk.CTkSwitch(header, text="Mode sombre", variable=self.dark_var,
@@ -431,19 +424,14 @@ class PingApp:
 
         oc = ctk.CTkFrame(rs, corner_radius=14)
         oc.pack(fill="x", pady=6)
-        ctk.CTkLabel(oc, text="Alertes & fenêtre", font=self.section_font).pack(anchor="w", padx=16, pady=(12, 6))
+        ctk.CTkLabel(oc, text="Alertes", font=self.section_font).pack(anchor="w", padx=16, pady=(12, 6))
         orow = ctk.CTkFrame(oc, fg_color="transparent")
         orow.pack(fill="x", padx=16, pady=(0, 14))
         self.alerts_var = tk.BooleanVar(value=True)
-        self.tray_var = tk.BooleanVar(value=True)
-        s_alert = ctk.CTkSwitch(orow, text="Alertes (son + notification)", variable=self.alerts_var,
-                                progress_color=self.accent)
+        s_alert = ctk.CTkSwitch(orow, text="Alertes (son + clignotement barre des tâches)",
+                                variable=self.alerts_var, progress_color=self.accent)
         s_alert.pack(side="left", padx=(0, 18))
         self.accent_switches.append(s_alert)
-        s_tray = ctk.CTkSwitch(orow, text="Icône dans le tray", variable=self.tray_var,
-                               command=self._toggle_tray, progress_color=self.accent)
-        s_tray.pack(side="left", padx=(0, 18))
-        self.accent_switches.append(s_tray)
 
         self.outline_btns = [self.btn_analyze, self.btn_clear, b_log, b_csv]
 
@@ -458,7 +446,6 @@ class PingApp:
         self.csv_file_var.set(c.get("csv_file", "ping_results.csv"))
         self.plot_prefix_var.set(c.get("plot_prefix", "ping"))
         self.alerts_var.set(bool(c.get("alerts", True)))
-        self.tray_var.set(bool(c.get("tray", True)))
         self._toggle_continuous()
 
     def save_config(self):
@@ -468,7 +455,7 @@ class PingApp:
             "interval": self.interval_var.get(), "log_file": self.log_file_var.get(),
             "csv_file": self.csv_file_var.get(), "plot_prefix": self.plot_prefix_var.get(),
             "dark": self.dark_var.get(), "accent": self.accent,
-            "alerts": self.alerts_var.get(), "tray": self.tray_var.get(),
+            "alerts": self.alerts_var.get(),
         }
         try:
             CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
@@ -553,7 +540,6 @@ class PingApp:
         self.status_var.set(text)
         if color:
             self.status_dot.configure(fg_color=color)
-            self._update_tray_status(color)
 
     def _toggle_continuous(self):
         self.duration_entry.configure(state="disabled" if self.continuous_var.get() else "normal")
@@ -787,17 +773,13 @@ class PingApp:
         if now - self.last_alert.get(key, 0) < ALERT_COOLDOWN:
             return
         self.last_alert[key] = now
-        if self.tray:
-            try:
-                self.tray.notify(message, "PingTester")
-            except Exception:
-                pass
         if winsound:
             try:
                 flag = winsound.MB_ICONHAND if kind == "outage" else winsound.MB_ICONEXCLAMATION
                 winsound.MessageBeep(flag)
             except Exception:
                 pass
+        self._flash_taskbar()
 
     # ------------------------------------------------------------------
     # Graphe + stats
@@ -826,7 +808,6 @@ class PingApp:
         pct = (lost / total * 100) if total else 0.0
         self.stats_var.set(f"Envoyés: {total}   Perdus: {lost} ({pct:.1f}%)")
         self.status_dot.configure(fg_color=color)
-        self._update_tray_status(color)
 
     def _refresh_stats(self):
         header = f"{'Hôte':<20}{'Env':>5}{'Perte':>8}{'Dern':>8}{'Moy':>8}{'Gigue':>8}{'Score':>9}\n"
@@ -988,84 +969,44 @@ class PingApp:
         self.btn_ping.configure(state="normal")
 
     # ------------------------------------------------------------------
-    # Zone de notification (tray) + fermeture
+    # Réduction (barre des tâches) + fermeture
     # ------------------------------------------------------------------
-    def _tray_image(self, color=IDLE_COLOR):
-        img = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-        d = ImageDraw.Draw(img)
-        d.rounded_rectangle([4, 4, 60, 60], radius=14, fill=(30, 41, 59, 255))
-        d.ellipse([20, 20, 44, 44], fill=color)
-        return img
+    def _flash_taskbar(self):
+        """Fait clignoter le bouton dans la barre des tâches (visible si réduit)."""
+        try:
+            user32 = ctypes.windll.user32
+            user32.GetParent.restype = ctypes.c_void_p
+            user32.GetParent.argtypes = [ctypes.c_void_p]
+            hwnd = user32.GetParent(self.root.winfo_id())
 
-    def _ensure_tray(self):
-        if self.tray is not None or pystray is None:
-            return
-        menu = pystray.Menu(
-            pystray.MenuItem("Afficher", self._tray_show, default=True),
-            pystray.MenuItem("Quitter", self._tray_quit),
-        )
-        self.tray = pystray.Icon("PingTester", self._tray_image(), "PingTester", menu)
-        self.tray.run_detached()
+            class FLASHWINFO(ctypes.Structure):
+                _fields_ = [("cbSize", ctypes.c_uint), ("hwnd", ctypes.c_void_p),
+                            ("dwFlags", ctypes.c_uint), ("uCount", ctypes.c_uint),
+                            ("dwTimeout", ctypes.c_uint)]
 
-    def _toggle_tray(self):
-        if self.tray_var.get():
-            try:
-                self._ensure_tray()
-            except Exception:
-                pass
-        elif self.tray:
-            try:
-                self.tray.stop()
-            except Exception:
-                pass
-            self.tray = None
-
-    def _update_tray_status(self, color):
-        if self.tray:
-            try:
-                self.tray.icon = self._tray_image(color)
-            except Exception:
-                pass
-
-    def _tray_show(self, icon=None, item=None):
-        self.root.after(0, self._show_window)
-
-    def _tray_quit(self, icon=None, item=None):
-        self.root.after(0, self._real_quit)
-
-    def _show_window(self):
-        self.root.deiconify()
-        self.root.lift()
-        self.root.focus_force()
+            FLASHW_ALL, FLASHW_TIMERNOFG = 0x3, 0xC
+            info = FLASHWINFO(ctypes.sizeof(FLASHWINFO), hwnd,
+                              FLASHW_ALL | FLASHW_TIMERNOFG, 4, 0)
+            user32.FlashWindowEx(ctypes.byref(info))
+        except Exception:
+            pass
 
     def _on_close(self):
-        if self.tray_var.get() and pystray is not None:
-            try:
-                self._ensure_tray()
-                self.root.withdraw()
-                if not self._tray_hint_shown:
-                    self._tray_hint_shown = True
-                    try:
-                        self.tray.notify(
-                            "PingTester tourne en arrière-plan. Icône près de l'horloge "
-                            "(parfois sous le chevron « ^ ») : clic pour rouvrir, clic droit pour quitter.",
-                            "Réduit dans la zone de notification")
-                    except Exception:
-                        pass
-                return
-            except Exception:
-                pass
+        # La croix réduit dans la barre des tâches ; l'app continue de tourner.
+        try:
+            self.root.iconify()
+            if not self._min_hint_shown:
+                self._min_hint_shown = True
+                self.log("ℹ Fenêtre réduite dans la barre des tâches (le ping continue). "
+                         "Utilise le bouton « Quitter » pour fermer l'application.", "info")
+            return
+        except Exception:
+            pass
         self._real_quit()
 
     def _real_quit(self):
         self.stop_event.set()
         self.save_config()
-        if self.tray:
-            try:
-                self.tray.stop()
-            except Exception:
-                pass
-            self.tray = None
         self.root.destroy()
 
 
