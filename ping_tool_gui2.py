@@ -65,7 +65,7 @@ DEFAULT_CONFIG = {
     "threshold": "100", "interval": "1.0",
     "log_file": "ping_log.txt", "csv_file": "ping_results.csv", "plot_prefix": "ping",
     "dark": False, "accent": DEFAULT_ACCENT,
-    "alerts": True, "sound": True, "tray": True,
+    "alerts": True, "tray": True,
 }
 
 
@@ -257,12 +257,19 @@ class PingApp:
         self.host_order = []
         self.last_alert = {}
         self.tray = None
+        self._tray_hint_shown = False
 
         self._build_widgets()
         self._apply_config_to_widgets()
         self.apply_accent(self.accent)
         self._apply_theme()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
+        # Icône de tray permanente (si activée) : état visible en continu
+        if self.tray_var.get() and pystray is not None:
+            try:
+                self._ensure_tray()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Construction de l'interface
@@ -428,13 +435,15 @@ class PingApp:
         orow = ctk.CTkFrame(oc, fg_color="transparent")
         orow.pack(fill="x", padx=16, pady=(0, 14))
         self.alerts_var = tk.BooleanVar(value=True)
-        self.sound_var = tk.BooleanVar(value=True)
         self.tray_var = tk.BooleanVar(value=True)
-        for txt, var in (("Alertes", self.alerts_var), ("Son", self.sound_var),
-                         ("Réduire dans le tray", self.tray_var)):
-            s = ctk.CTkSwitch(orow, text=txt, variable=var, progress_color=self.accent)
-            s.pack(side="left", padx=(0, 18))
-            self.accent_switches.append(s)
+        s_alert = ctk.CTkSwitch(orow, text="Alertes (son + notification)", variable=self.alerts_var,
+                                progress_color=self.accent)
+        s_alert.pack(side="left", padx=(0, 18))
+        self.accent_switches.append(s_alert)
+        s_tray = ctk.CTkSwitch(orow, text="Icône dans le tray", variable=self.tray_var,
+                               command=self._toggle_tray, progress_color=self.accent)
+        s_tray.pack(side="left", padx=(0, 18))
+        self.accent_switches.append(s_tray)
 
         self.outline_btns = [self.btn_analyze, self.btn_clear, b_log, b_csv]
 
@@ -449,7 +458,6 @@ class PingApp:
         self.csv_file_var.set(c.get("csv_file", "ping_results.csv"))
         self.plot_prefix_var.set(c.get("plot_prefix", "ping"))
         self.alerts_var.set(bool(c.get("alerts", True)))
-        self.sound_var.set(bool(c.get("sound", True)))
         self.tray_var.set(bool(c.get("tray", True)))
         self._toggle_continuous()
 
@@ -460,7 +468,7 @@ class PingApp:
             "interval": self.interval_var.get(), "log_file": self.log_file_var.get(),
             "csv_file": self.csv_file_var.get(), "plot_prefix": self.plot_prefix_var.get(),
             "dark": self.dark_var.get(), "accent": self.accent,
-            "alerts": self.alerts_var.get(), "sound": self.sound_var.get(), "tray": self.tray_var.get(),
+            "alerts": self.alerts_var.get(), "tray": self.tray_var.get(),
         }
         try:
             CONFIG_PATH.write_text(json.dumps(cfg, indent=2), encoding="utf-8")
@@ -784,7 +792,7 @@ class PingApp:
                 self.tray.notify(message, "PingTester")
             except Exception:
                 pass
-        if self.sound_var.get() and winsound:
+        if winsound:
             try:
                 flag = winsound.MB_ICONHAND if kind == "outage" else winsound.MB_ICONEXCLAMATION
                 winsound.MessageBeep(flag)
@@ -999,6 +1007,19 @@ class PingApp:
         self.tray = pystray.Icon("PingTester", self._tray_image(), "PingTester", menu)
         self.tray.run_detached()
 
+    def _toggle_tray(self):
+        if self.tray_var.get():
+            try:
+                self._ensure_tray()
+            except Exception:
+                pass
+        elif self.tray:
+            try:
+                self.tray.stop()
+            except Exception:
+                pass
+            self.tray = None
+
     def _update_tray_status(self, color):
         if self.tray:
             try:
@@ -1022,6 +1043,15 @@ class PingApp:
             try:
                 self._ensure_tray()
                 self.root.withdraw()
+                if not self._tray_hint_shown:
+                    self._tray_hint_shown = True
+                    try:
+                        self.tray.notify(
+                            "PingTester tourne en arrière-plan. Icône près de l'horloge "
+                            "(parfois sous le chevron « ^ ») : clic pour rouvrir, clic droit pour quitter.",
+                            "Réduit dans la zone de notification")
+                    except Exception:
+                        pass
                 return
             except Exception:
                 pass
