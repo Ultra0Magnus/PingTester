@@ -12,6 +12,8 @@ import queue
 import os
 import sys
 import ctypes
+import urllib.request
+import urllib.error
 from pathlib import Path
 
 import customtkinter as ctk
@@ -63,6 +65,13 @@ DEFAULT_CONFIG = {
     "dark": False, "accent": DEFAULT_ACCENT,
     "alerts": True,
 }
+
+# Test de débit (endpoints Cloudflare, via urllib)
+SPEED_DOWN_URL = "https://speed.cloudflare.com/__down?bytes=%d"
+SPEED_UP_URL = "https://speed.cloudflare.com/__up"
+SPEED_DL_BYTES, SPEED_DL_SECONDS = 80_000_000, 10.0   # plafonds download
+SPEED_UL_CHUNK, SPEED_UL_SECONDS = 5_000_000, 10.0    # chunk + plafond upload
+SPEED_UA = {"User-Agent": "PingTester"}
 
 
 def _hex_to_rgb(h):
@@ -254,6 +263,11 @@ class PingApp:
         self.last_alert = {}
         self._min_hint_shown = False
 
+        # Test de débit
+        self.speed_running = False
+        self.speed_stop = threading.Event()
+        self._last_speed_ui = 0.0
+
         self._build_widgets()
         self._apply_config_to_widgets()
         self.apply_accent(self.accent)
@@ -356,6 +370,7 @@ class PingApp:
         graph_tab = self.tabview.add("Graphique")
         stats_tab = self.tabview.add("Stats")
         log_tab = self.tabview.add("Journal")
+        deb_tab = self.tabview.add("Débit")
         reg_tab = self.tabview.add("Réglages")
 
         self.fig = Figure(figsize=(8, 4), dpi=100)
@@ -372,6 +387,35 @@ class PingApp:
 
         self.log_area = ctk.CTkTextbox(log_tab, corner_radius=8, font=self.mono_font, state="disabled")
         self.log_area.pack(fill="both", expand=True, padx=6, pady=6)
+
+        # ---- Onglet Débit ----
+        self.speed_big_font = ctk.CTkFont(size=30, weight="bold")
+        dframe = ctk.CTkFrame(deb_tab, fg_color="transparent")
+        dframe.pack(fill="both", expand=True, padx=10, pady=10)
+        ctk.CTkLabel(dframe, text="Test de débit (via Cloudflare)", font=self.section_font).pack(anchor="w")
+        self.btn_speed = ctk.CTkButton(dframe, text="▶  Tester le débit", height=42, corner_radius=18,
+                                       font=self.section_font, command=self._toggle_speedtest)
+        self.btn_speed.pack(fill="x", pady=(10, 6))
+        self.speed_progress = ctk.CTkProgressBar(dframe, corner_radius=8)
+        self.speed_progress.set(0)
+        self.speed_progress.pack(fill="x", pady=(0, 4))
+        self.speed_phase_var = tk.StringVar(value="Prêt à tester.")
+        ctk.CTkLabel(dframe, textvariable=self.speed_phase_var).pack(anchor="w", pady=(0, 10))
+
+        cards = ctk.CTkFrame(dframe, fg_color="transparent")
+        cards.pack(fill="x")
+        for i in range(3):
+            cards.columnconfigure(i, weight=1, uniform="spd")
+        self.dl_var = tk.StringVar(value="—")
+        self.ul_var = tk.StringVar(value="—")
+        self.lat_var = tk.StringVar(value="—")
+        for col, (title, var) in enumerate((("Download (Mbps)", self.dl_var),
+                                            ("Upload (Mbps)", self.ul_var),
+                                            ("Latence serveur (ms)", self.lat_var))):
+            card = ctk.CTkFrame(cards, corner_radius=14)
+            card.grid(row=0, column=col, sticky="ew", padx=6)
+            ctk.CTkLabel(card, text=title).pack(pady=(14, 2))
+            ctk.CTkLabel(card, textvariable=var, font=self.speed_big_font).pack(pady=(0, 14))
 
         # ---- Onglet Réglages (défilable) ----
         rs = ctk.CTkScrollableFrame(reg_tab, fg_color="transparent")
@@ -470,11 +514,13 @@ class PingApp:
         self.accent_hover = darken(color, 0.18)
         self.outline_hover = (_blend(color, (255, 255, 255), 0.86), _blend(color, (0, 0, 0), 0.55))
         self.btn_ping.configure(fg_color=self.accent, hover_color=self.accent_hover)
+        self.btn_speed.configure(fg_color=self.accent, hover_color=self.accent_hover)
         for b in self.outline_btns:
             b.configure(border_color=self.accent, text_color=self.accent, hover_color=self.outline_hover)
         for s in self.accent_switches:
             s.configure(progress_color=self.accent)
         self.progress.configure(progress_color=self.accent)
+        self.speed_progress.configure(progress_color=self.accent)
         self.tabview.configure(segmented_button_selected_color=self.accent,
                                segmented_button_selected_hover_color=self.accent_hover)
         if len(self.host_order) == 1:
@@ -967,6 +1013,127 @@ class PingApp:
         self.set_status("Erreur lors de l'analyse", ERR_COLOR)
         self.btn_analyze.configure(state="normal")
         self.btn_ping.configure(state="normal")
+
+    # ------------------------------------------------------------------
+    # Test de débit (Cloudflare)
+    # ------------------------------------------------------------------
+    def _toggle_speedtest(self):
+        if self.speed_running:
+            self.speed_stop.set()
+            self.btn_speed.configure(state="disabled")
+            self.speed_phase_var.set("Annulation…")
+            return
+        self.speed_stop.clear()
+        self.speed_running = True
+        self.dl_var.set("…"); self.ul_var.set("—"); self.lat_var.set("—")
+        self.speed_progress.set(0)
+        self.speed_phase_var.set("Mesure de la latence…")
+        self.btn_speed.configure(text="■  Annuler", fg_color=DANGER, hover_color=DANGER_HOVER)
+        self.log("--- Test de débit ---", "info")
+        threading.Thread(target=self._speedtest_worker, daemon=True).start()
+
+    def _speedtest_worker(self):
+        try:
+            lat = self._measure_latency()
+            if self.speed_stop.is_set():
+                return self.root.after(0, self._speed_done, None, None, lat, True)
+            self.root.after(0, self._speed_ui, "Téléchargement…", 0.0, None, "dl")
+            dl = self._measure_download()
+            if self.speed_stop.is_set():
+                return self.root.after(0, self._speed_done, dl, None, lat, True)
+            self.root.after(0, self._speed_ui, "Envoi…", 0.0, None, "ul")
+            ul = self._measure_upload()
+            self.root.after(0, self._speed_done, dl, ul, lat, self.speed_stop.is_set())
+        except Exception as e:
+            self.root.after(0, self._speed_error, str(e))
+
+    def _measure_latency(self, n=5):
+        times = []
+        for _ in range(n):
+            if self.speed_stop.is_set():
+                break
+            t = time.time()
+            try:
+                with urllib.request.urlopen(
+                        urllib.request.Request(SPEED_DOWN_URL % 0, headers=SPEED_UA), timeout=10) as r:
+                    r.read()
+                times.append((time.time() - t) * 1000)
+            except Exception:
+                pass
+        return min(times) if times else None
+
+    def _measure_download(self):
+        req = urllib.request.Request(SPEED_DOWN_URL % SPEED_DL_BYTES, headers=SPEED_UA)
+        start = last = time.time()
+        read = 0
+        with urllib.request.urlopen(req, timeout=20) as r:
+            while not self.speed_stop.is_set():
+                chunk = r.read(131072)
+                if not chunk:
+                    break
+                read += len(chunk)
+                elapsed = time.time() - start
+                if time.time() - last >= 0.12:
+                    last = time.time()
+                    mbps = read * 8 / elapsed / 1e6 if elapsed > 0 else 0
+                    self.root.after(0, self._speed_ui, "Téléchargement…",
+                                    min(1.0, elapsed / SPEED_DL_SECONDS), mbps, "dl")
+                if elapsed >= SPEED_DL_SECONDS:
+                    break
+        elapsed = time.time() - start
+        return read * 8 / elapsed / 1e6 if elapsed > 0 else 0.0
+
+    def _measure_upload(self):
+        payload = b"\x00" * SPEED_UL_CHUNK
+        start = time.time()
+        sent = 0
+        while not self.speed_stop.is_set():
+            req = urllib.request.Request(SPEED_UP_URL, data=payload, method="POST",
+                                         headers={**SPEED_UA, "Content-Type": "application/octet-stream"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                r.read()
+            sent += SPEED_UL_CHUNK
+            elapsed = time.time() - start
+            mbps = sent * 8 / elapsed / 1e6 if elapsed > 0 else 0
+            self.root.after(0, self._speed_ui, "Envoi…",
+                            min(1.0, elapsed / SPEED_UL_SECONDS), mbps, "ul")
+            if elapsed >= SPEED_UL_SECONDS:
+                break
+        elapsed = time.time() - start
+        return sent * 8 / elapsed / 1e6 if elapsed > 0 else 0.0
+
+    def _speed_ui(self, phase, frac, mbps, which):
+        self.speed_phase_var.set(phase)
+        self.speed_progress.set(frac)
+        if mbps is not None:
+            (self.dl_var if which == "dl" else self.ul_var).set(f"{mbps:.1f}")
+
+    def _speed_done(self, dl, ul, lat, cancelled=False):
+        self.speed_running = False
+        self.speed_progress.set(0)
+        self.btn_speed.configure(text="▶  Tester le débit", state="normal",
+                                 fg_color=self.accent, hover_color=self.accent_hover)
+        self.dl_var.set(f"{dl:.1f}" if dl is not None else "—")
+        self.ul_var.set(f"{ul:.1f}" if ul is not None else "—")
+        self.lat_var.set(f"{lat:.0f}" if lat is not None else "—")
+        if cancelled:
+            self.speed_phase_var.set("Test annulé.")
+            self.log("Test de débit annulé.", "warn")
+            self.set_status("Test de débit annulé.", IDLE_COLOR)
+        else:
+            self.speed_phase_var.set("Terminé.")
+            self.log(f"Débit : ↓ {dl:.1f} Mbps   ↑ {ul:.1f} Mbps"
+                     + (f"   (latence {lat:.0f} ms)" if lat is not None else ""), "info")
+            self.set_status(f"Débit : ↓ {dl:.1f} / ↑ {ul:.1f} Mbps", OK_COLOR)
+
+    def _speed_error(self, message):
+        self.speed_running = False
+        self.speed_progress.set(0)
+        self.btn_speed.configure(text="▶  Tester le débit", state="normal",
+                                 fg_color=self.accent, hover_color=self.accent_hover)
+        self.speed_phase_var.set("Échec du test.")
+        self.log(f"ERREUR test de débit : {message}", "err")
+        self.set_status("Échec du test de débit", ERR_COLOR)
 
     # ------------------------------------------------------------------
     # Réduction (barre des tâches) + fermeture

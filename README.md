@@ -17,6 +17,9 @@ alertes, thème clair/sombre et export CSV/PNG.
   d'où vient un problème (routeur vs FAI vs serveur).
 - 📊 **Onglet Stats** — tableau par hôte (envoyés, perte %, latence moyenne, gigue) et un
   **score de qualité A-F**.
+- 🚀 **Test de débit** — onglet dédié : mesure **Download + Upload** (Mbps) et **latence
+  serveur** via Cloudflare (bibliothèque standard, sans dépendance ajoutée), barre de
+  progression, annulable en cours de test.
 - ⏱ Ping sur **durée fixe** ou **en continu**, **intervalle réglable**, bouton **Stop**.
 - 🔔 **Alertes** sur dépassement de seuil ou coupure : **son + clignotement** de la barre des tâches.
 - 🎨 Interface **CustomTkinter** : coins arrondis, **thème clair/sombre**, **couleur d'accent**
