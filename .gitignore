@@ -6,6 +6,8 @@ __pycache__/
 ping_log.txt
 ping_results.csv
 *.png
+# ...mais on garde les captures du README
+!docs/*.png
 
 # Artefacts de build PyInstaller
 build/
