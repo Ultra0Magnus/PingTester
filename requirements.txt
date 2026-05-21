@@ -1,9 +1,11 @@
 # Dépendances d'exécution
 customtkinter>=5.2.2
 matplotlib>=3.10
+pystray>=0.19          # zone de notification (tray)
+pillow>=10             # icônes / logo (tiré aussi par matplotlib)
 
 # Pour compiler l'exécutable (.exe), optionnel :
 #   pip install pyinstaller
 #   python -m PyInstaller --onefile --windowed --name PingTester \
 #       --icon ping_tool_ico.ico --add-data "ping_tool_ico.ico;." \
-#       --collect-all customtkinter ping_tool_gui2.py
+#       --collect-all customtkinter --collect-all pystray ping_tool_gui2.py
