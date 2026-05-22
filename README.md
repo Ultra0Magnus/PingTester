@@ -71,9 +71,9 @@ Un exécutable prêt à l'emploi est disponible dans la
 
 ## Aperçu
 
-| Mode clair (graphique) | Mode sombre (stats) |
+| Onglet Graphique | Onglet Débit |
 |---|---|
-| ![clair](docs/screenshot.png) | ![sombre](docs/screenshot-dark.png) |
+| ![graphique](docs/screenshot.png) | ![débit](docs/screenshot-dark.png) |
 
 ## Structure du projet
 
