@@ -12,7 +12,8 @@ alertes, thème clair/sombre et export CSV/PNG.
 
 ## Fonctionnalités
 
-- 📈 **Graphique de latence en direct** intégré (une courbe par hôte).
+- 📈 **Graphique de latence en direct** intégré (une courbe par hôte, fenêtre glissante des
+  1 800 derniers pings — les statistiques couvrent toute la session).
 - 🌐 **Multi-hôtes simultanés** — comparez plusieurs cibles (box, DNS, site) pour diagnostiquer
   d'où vient un problème (routeur vs FAI vs serveur).
 - 📊 **Onglet Stats** — tableau par hôte (envoyés, perte %, latence moyenne, gigue) et un
@@ -80,7 +81,8 @@ Un exécutable prêt à l'emploi est disponible dans la
 | Fichier | Rôle |
 |---|---|
 | `ping_tool_gui2.py` | **Application principale** (interface complète, recommandée) |
-| `ping_tool.py` | Version en ligne de commande (modes `ping` / `analyze`) |
+| `ping_core.py` | Cœur sans interface (ping, lecture du journal, stats, export CSV/PNG, test de débit), partagé par l'interface et la ligne de commande |
+| `ping_tool.py` | Version en ligne de commande (modes `ping` / `analyze`), même format de journal que l'interface |
 | `ping_tool_gui.py` | Ancienne interface (héritée, conservée pour référence) |
 | `ping_tool_ico.ico` | Icône de l'application |
 | `requirements.txt` | Dépendances Python |
