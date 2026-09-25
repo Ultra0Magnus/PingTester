@@ -1,8 +1,8 @@
 # PingTester
 
-Outil de **test et de surveillance de ping** pour Windows, avec interface graphique moderne :
-graphique de latence en **temps réel**, surveillance **multi-hôtes**, statistiques de qualité,
-alertes, thème clair/sombre et export CSV/PNG.
+Outil de **test et de surveillance de ping** pour Windows, avec une interface sombre « Nuit » :
+un **diagnostic en clair**, une carte par adresse, un graphique de latence en **temps réel**,
+un fil d'**événements**, des alertes, un test de débit et l'export CSV/PNG.
 
 ![Release](https://img.shields.io/github/v/release/Ultra0Magnus/PingTester)
 ![Platform](https://img.shields.io/badge/plateforme-Windows-0078d4)
@@ -12,18 +12,20 @@ alertes, thème clair/sombre et export CSV/PNG.
 
 ## Fonctionnalités
 
-- 📈 **Graphique de latence en direct** intégré (une courbe par hôte).
-- 🌐 **Multi-hôtes simultanés** — comparez plusieurs cibles (box, DNS, site) pour diagnostiquer
-  d'où vient un problème (routeur vs FAI vs serveur).
-- 📊 **Onglet Stats** — tableau par hôte (envoyés, perte %, latence moyenne, gigue) et un
-  **score de qualité A-F**.
-- 🚀 **Test de débit** — onglet dédié : mesure **Download + Upload** (Mbps) et **latence
-  serveur** via Cloudflare (bibliothèque standard, sans dépendance ajoutée), barre de
-  progression, annulable en cours de test.
+- 🩺 **Diagnostic en clair** — un bandeau résume l'état (« Tout va bien », « Connexion
+  ralentie », « Coupure en cours »…) avec un **score de qualité A-F**.
+- 🌐 **Multi-adresses simultanées** — comparez box, DNS et site pour savoir d'où vient un
+  problème (routeur vs FAI vs serveur). Chaque adresse a sa **carte** : nom lisible (Box /
+  routeur, Cloudflare DNS…), état, dernière latence, mini-graphe, moyenne, perte, gigue et note.
+- 📈 **Graphique de latence en direct** (une courbe par adresse, fenêtre glissante des
+  1 800 derniers pings — les statistiques couvrent toute la session).
+- 🧾 **Fil d'événements** — coupures, lenteurs et retours à la normale, en français courant ;
+  le journal détaillé de chaque ping reste accessible.
+- 🚀 **Test de débit** — écran dédié : **réception + envoi** (Mbit/s) et **latence du serveur**
+  via Cloudflare (bibliothèque standard, sans dépendance ajoutée), annulable en cours de test.
 - ⏱ Ping sur **durée fixe** ou **en continu**, **intervalle réglable**, bouton **Stop**.
 - 🔔 **Alertes** sur dépassement de seuil ou coupure : **son + clignotement** de la barre des tâches.
-- 🎨 Interface **CustomTkinter** : coins arrondis, **thème clair/sombre**, **couleur d'accent**
-  personnalisable.
+- 🎨 Interface **CustomTkinter** sombre, **4 accents bleus** au choix dans les Réglages.
 - 💾 **Préférences mémorisées** entre les sessions (`~/.pingtester.json`).
 - 🪟 La croix **réduit dans la barre des tâches** (le ping continue) ; bouton **Quitter** dédié.
 - 📤 **Analyse hors-ligne** d'un journal : export **CSV** (min/max/moyenne/médiane/écart-type/gigue,
@@ -44,10 +46,13 @@ pip install -r requirements.txt
 python ping_tool_gui2.py
 ```
 
-1. Saisir un ou plusieurs **hôtes** séparés par des virgules (ex. `8.8.8.8, 1.1.1.1`).
-2. Cliquer sur **▶ Lancer Ping** : la courbe se trace en direct, l'onglet **Stats** se met à jour.
-3. Ajuster durée, intervalle, seuil d'alerte et fichiers dans l'onglet **Réglages**.
-4. **📊 Analyser** relit le fichier journal et génère le CSV + les graphiques PNG.
+1. Saisir une ou plusieurs **adresses** en haut, séparées par des virgules
+   (ex. `192.168.1.1, 1.1.1.1, 8.8.8.8`).
+2. Cliquer sur **▶ Démarrer** : le diagnostic, les cartes, la courbe et les événements se mettent
+   à jour en direct. **■ Arrêter** termine la surveillance.
+3. **Réglages** : mode continu ou durée fixe, intervalle, seuil d'alerte, alertes, couleur
+   d'accent et fichiers.
+4. **Réglages → Analyser le fichier journal** relit un journal et génère le CSV + les graphiques PNG.
 
 ## Compiler un exécutable (.exe)
 
@@ -71,16 +76,17 @@ Un exécutable prêt à l'emploi est disponible dans la
 
 ## Aperçu
 
-| Onglet Graphique | Onglet Débit |
+| Tableau de bord | Test de débit |
 |---|---|
-| ![graphique](docs/screenshot.png) | ![débit](docs/screenshot-dark.png) |
+| ![tableau de bord](docs/screenshot.png) | ![débit](docs/screenshot-debit.png) |
 
 ## Structure du projet
 
 | Fichier | Rôle |
 |---|---|
 | `ping_tool_gui2.py` | **Application principale** (interface complète, recommandée) |
-| `ping_tool.py` | Version en ligne de commande (modes `ping` / `analyze`) |
+| `ping_core.py` | Cœur sans interface (ping, lecture du journal, stats, export CSV/PNG, test de débit), partagé par l'interface et la ligne de commande |
+| `ping_tool.py` | Version en ligne de commande (modes `ping` / `analyze`), même format de journal que l'interface |
 | `ping_tool_gui.py` | Ancienne interface (héritée, conservée pour référence) |
 | `ping_tool_ico.ico` | Icône de l'application |
 | `requirements.txt` | Dépendances Python |

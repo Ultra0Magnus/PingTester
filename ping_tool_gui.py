@@ -239,30 +239,13 @@ class PingApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-# ... à la fin de votre fichier ping_tool_gui.py ...
 
-if __name__ == "__main__":
-    root = tk.Tk()
-    
-    # --- AJOUT POUR L'ICÔNE DE LA FENÊTRE ET DE LA BARRE DES TÂCHES ---
-    # On définit le nom du fichier icône (doit être au format .ico)
-    icon_file = "app_icon.ico"
-    
-    # On essaie de charger l'icône. On utilise un bloc try/except pour éviter
-    # que le programme ne plante si le fichier icône est absent (par exemple si
-    # vous déplacez l'exe seul).
+    # Icône de la fenêtre et de la barre des tâches (facultative : on garde
+    # l'icône par défaut si le fichier est absent, par exemple exe déplacé seul).
     try:
-        # C'est cette ligne qui fait apparaître l'icône dans la barre des tâches
-        # et dans le coin de la fenêtre.
-        root.iconbitmap(icon_file)
-    except Exception as e:
-        # Si l'icône n'est pas trouvée, ce n'est pas grave, on continue avec l'icône par défaut.
-        # On peut afficher un petit message dans la console pour le débogage si besoin.
-        # print(f"Attention: Impossible de charger l'icône '{icon_file}'. Erreur: {e}")
+        root.iconbitmap(str(Path(__file__).with_name("ping_tool_ico.ico")))
+    except Exception:
         pass
-    # -------------------------------------------------------------------
 
-    app = PingApp(root)
-    root.mainloop()
     app = PingApp(root)
     root.mainloop()
