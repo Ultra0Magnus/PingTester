@@ -262,6 +262,8 @@ SPEED_HEADERS = {"User-Agent": "PingTester"}
 SPEED_TIMEOUT = 15             # s, par opération réseau
 SPEED_SECONDS = 10.0           # durée max de chaque phase de débit
 SPEED_DL_REQUEST = 25_000_000  # octets par requête de téléchargement (répétée)
+SPEED_UL_FIRST = 2_000_000     # 1re requête d'envoi ; les suivantes visent ~1 s de données
+SPEED_UL_REQUEST = 25_000_000  # octets max par requête d'envoi
 SPEED_BLOCK = 65536
 SPEED_LAT_SAMPLES = 5
 SPEED_PROGRESS_PERIOD = 0.12   # s entre deux rappels de progression
@@ -291,6 +293,8 @@ def _speed_connection():
 
 
 def _check(resp):
+    if resp.status == 429:
+        raise OSError("trop de tests récents, le serveur limite les mesures : réessayez dans quelques minutes")
     if resp.status != 200:
         raise OSError(f"HTTP {resp.status} {resp.reason}")
 
@@ -346,17 +350,20 @@ def measure_download(stop, progress=None, seconds=SPEED_SECONDS):
 
 
 def measure_upload(stop, progress=None, seconds=SPEED_SECONDS):
-    """Débit montant (Mbps). Corps envoyé en flux (chunked) et interrompu à
-    `seconds` : durée bornée et annulation rapide même sur une liaison lente."""
+    """Débit montant (Mbps). Requêtes en flux (chunked) enchaînées sur la même
+    connexion jusqu'à `seconds`, chacune d'environ 1 s de données au débit mesuré
+    (entre SPEED_UL_FIRST et SPEED_UL_REQUEST octets) : durée bornée, annulation
+    rapide, et attente de la réponse courte même derrière un proxy qui bufferise."""
     conn = _speed_connection()
     block = bytes(SPEED_BLOCK)
     sent = 0
     start = time.perf_counter()
+    next_report = start + SPEED_PROGRESS_PERIOD
 
-    def body():
-        nonlocal sent
-        next_report = start + SPEED_PROGRESS_PERIOD
-        while not stop.is_set():
+    def body(limit):
+        nonlocal sent, next_report
+        in_request = 0
+        while in_request < limit and not stop.is_set():
             now = time.perf_counter()
             if now - start >= seconds:
                 return
@@ -364,14 +371,22 @@ def measure_upload(stop, progress=None, seconds=SPEED_SECONDS):
                 next_report = now + SPEED_PROGRESS_PERIOD
                 progress(min(1.0, (now - start) / seconds), _mbps(sent, now - start))
             yield block
+            in_request += len(block)
             sent += len(block)   # compté une fois remis au socket
 
+    size = SPEED_UL_FIRST
     try:
-        conn.request("POST", "/__up", body=body(),
-                     headers={**SPEED_HEADERS, "Content-Type": "application/octet-stream"})
-        resp = conn.getresponse()
-        resp.read()
-        _check(resp)
-        return _mbps(sent, time.perf_counter() - start)   # chrono arrêté à la réponse du serveur
+        while not stop.is_set() and time.perf_counter() - start < seconds:
+            req_start, req_sent = time.perf_counter(), sent
+            conn.request("POST", "/__up", body=body(size),
+                         headers={**SPEED_HEADERS, "Content-Type": "application/octet-stream"})
+            if stop.is_set():      # annulé : inutile d'attendre la réponse, valeur indicative
+                break
+            resp = conn.getresponse()
+            resp.read()
+            _check(resp)
+            rate = (sent - req_sent) / max(time.perf_counter() - req_start, 1e-3)   # octets/s
+            size = int(min(SPEED_UL_REQUEST, max(SPEED_UL_FIRST, rate)))
+        return _mbps(sent, time.perf_counter() - start)   # chrono arrêté à la dernière réponse
     finally:
         conn.close()
