@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PingTester en ligne de commande : --mode ping (journal) ou --mode analyze (CSV + PNG)."""
 import argparse
+import os
 import time
 
 from ping_core import (CSV_FILE, LOG_FILE, compute_quality, format_log_line, group_by_host, now_str,
@@ -15,6 +16,8 @@ def run_ping(host="8.8.8.8", duration=60, log_file=LOG_FILE, interval=1.0):
     format shared with the GUI (TS\\tHOST\\tSTATUS\\tLAT)."""
     next_at = time.monotonic()
     deadline = next_at + duration - 1e-6   # tolerance for rounding in next_at += interval
+    if os.path.exists(log_file):   # keep the previous session analyzable
+        os.replace(log_file, log_file + ".prev")
     with open(log_file, "w", encoding="utf-8", buffering=1) as f:
         while True:
             ts = now_str()
