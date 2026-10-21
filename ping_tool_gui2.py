@@ -522,7 +522,7 @@ class PingApp:
         self.host_var = tk.StringVar(value=c["hosts"])
         self.host_entry = self._entry(top, self.host_var, width=210)
         self.host_entry.pack(side="right")
-        self.host_entry.bind("<Return>", lambda _e: None if self.ping_running else self.start_ping())
+        self.host_entry.bind("<Return>", lambda _e: self.start_ping())
         ctk.CTkLabel(top, text="Adresses", font=self.f_body, text_color=TEXT_2).pack(side="right", padx=(0, 8))
 
         self.body = ctk.CTkFrame(self.outer, fg_color="transparent")
@@ -917,6 +917,8 @@ class PingApp:
             self.start_ping()
 
     def start_ping(self):
+        if self.ping_running or self.analyzing:   # Entrée dans le champ Adresses contourne le bouton grisé
+            return
         hosts = self._parse_hosts()
         if not hosts:
             messagebox.showerror("Erreur", "Veuillez saisir au moins une adresse.")
@@ -940,6 +942,8 @@ class PingApp:
             messagebox.showerror("Erreur", "Veuillez indiquer un fichier journal (Réglages).")
             return
         try:
+            if os.path.exists(log_file):   # la session précédente reste analysable
+                os.replace(log_file, log_file + ".prev")
             self.log_fh = open(log_file, "w", encoding="utf-8", buffering=1)   # vidé à chaque ligne
         except Exception as e:
             messagebox.showerror("Erreur", f"Impossible d'ouvrir le journal : {e}")

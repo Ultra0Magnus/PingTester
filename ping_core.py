@@ -30,6 +30,10 @@ DEFAULT_ACCENT = HOST_PALETTE[0]
 TS_RE = re.compile(r"^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
 LATENCY_RE = re.compile(r"(?:temps|time)[=<]?\s*(\d+)\s*ms", re.IGNORECASE)
 TIMEOUT_RE = re.compile(r"(D[ée]lai d|Request timed out|h[ôo]te de destination|Destination host)", re.IGNORECASE)
+# Latence d'une réponse de « ping -n 1 », quelle que soit la langue de Windows (Zeit=12ms,
+# время=12мс…) : le nombre juste avant « TTL= ». Pas pour le journal brut, dont les lignes
+# de statistiques (Minimum = 12ms) seraient comptées comme des pings.
+REPLY_LATENCY_RE = re.compile(r"[=<]\s?(\d+)\s?[^\s\d=]+\s+TTL=")
 
 # Masque la console de ping.exe (sans effet hors Windows)
 _CREATION_FLAGS = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -53,11 +57,17 @@ def ping_once(host, timeout=PING_TIMEOUT):
 
     stdin est redirigé pour l'exe PyInstaller sans console, et les octets non
     décodables (page de code OEM de ping.exe) sont remplacés plutôt que de lever.
+    Un ping qui dépasse `timeout` (DNS qui ne répond plus pendant une coupure) compte
+    comme perdu.
     """
-    result = subprocess.run(["ping", "-n", "1", host], capture_output=True, text=True,
-                            errors="replace", stdin=subprocess.DEVNULL, timeout=timeout,
-                            creationflags=_CREATION_FLAGS)
-    return extract_latency(result.stdout), result.stdout
+    try:
+        result = subprocess.run(["ping", "-n", "1", host], capture_output=True, text=True,
+                                errors="replace", stdin=subprocess.DEVNULL, timeout=timeout,
+                                creationflags=_CREATION_FLAGS)
+    except subprocess.TimeoutExpired:
+        return None, ""
+    m = REPLY_LATENCY_RE.search(result.stdout)
+    return (int(m.group(1)) if m else None), result.stdout
 
 
 def host_color(i, n, accent=DEFAULT_ACCENT):
@@ -188,7 +198,8 @@ def group_by_host(rows):
 # ---------------------------------------------------------------------------
 def write_csv(rows, summaries, csv_file):
     """rows : sortie de parse_log_file ; summaries : {hôte: summarize(...)}."""
-    with open(csv_file, "w", newline="", encoding="utf-8") as f:
+    # BOM : sans lui, Excel lit le fichier en Windows-1252 et casse les accents.
+    with open(csv_file, "w", newline="", encoding="utf-8-sig") as f:
         w = csv.writer(f)
         w.writerow(["Timestamp", "Host", "Latency_ms", "Status"])
         w.writerows(rows)

@@ -30,7 +30,7 @@ un fil d'**événements**, des alertes, un test de débit et l'export CSV/PNG.
 - 🪟 La croix **réduit dans la barre des tâches** (le ping continue) ; bouton **Quitter** dédié.
 - 📤 **Analyse hors-ligne** d'un journal : export **CSV** (min/max/moyenne/médiane/écart-type/gigue,
   par hôte) + **graphiques PNG**.
-- 🇫🇷🇬🇧 Détection des réponses ping en **français et anglais**.
+- 🌍 Détection des réponses ping **quelle que soit la langue de Windows**.
 
 ## Installation
 
@@ -87,7 +87,7 @@ Un exécutable prêt à l'emploi est disponible dans la
 | `ping_tool_gui2.py` | **Application principale** (interface complète, recommandée) |
 | `ping_core.py` | Cœur sans interface (ping, lecture du journal, stats, export CSV/PNG, test de débit), partagé par l'interface et la ligne de commande |
 | `ping_tool.py` | Version en ligne de commande (modes `ping` / `analyze`), même format de journal que l'interface |
-| `ping_tool_gui.py` | Ancienne interface (héritée, conservée pour référence) |
+| `test_ping_core.py` | Tests du cœur (`python test_ping_core.py`) |
 | `ping_tool_ico.ico` | Icône de l'application |
 | `requirements.txt` | Dépendances Python |
 
@@ -95,4 +95,5 @@ Un exécutable prêt à l'emploi est disponible dans la
 
 - Outil **spécifique à Windows** (utilise `ping -n`).
 - Les préférences sont enregistrées dans `~/.pingtester.json` à la fermeture.
+- Chaque démarrage renomme le journal précédent en `<journal>.prev` au lieu de l'écraser.
 - Dépendances principales : `customtkinter`, `matplotlib`, `pillow`.

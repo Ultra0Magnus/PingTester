@@ -4,6 +4,7 @@ __pycache__/
 
 # Fichiers générés par l'outil
 ping_log.txt
+*.prev
 ping_results.csv
 *.png
 # ...mais on garde les captures du README
